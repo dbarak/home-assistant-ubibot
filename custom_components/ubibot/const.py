@@ -25,6 +25,12 @@ SENSOR_TYPES = {
         "icon": "mdi:lightbulb-on-outline",
         "field": "field3",
     },
+    "temperature External": {
+        "class": DEVICE_CLASS_TEMPERATURE,
+        "unit": TEMP_CELSIUS,
+        "icon": "mdi:thermometer",
+        "field": "field8",
+    },
 }
 
 MODELS = {"ubibot-ws1": "WS1"}
