@@ -1,10 +1,7 @@
 {
   "domain": "ubibot",
-  "name": "Ubibot Sensor",
-  "version": "1.0.0",
-  "requirements": [
-    "async_timeout==4.0.2"
-  ],
+  "name": "Ubibot WS1 Sensor",
+  "version": "1.0.1",
   "dependencies": [],
   "codeowners": []
 }
