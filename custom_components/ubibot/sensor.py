@@ -1,143 +1,121 @@
-"""Ubibot sensor."""
-
 import logging
-import threading
-from datetime import datetime, timedelta
-import requests
+from datetime import timedelta
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import Entity
-from homeassistant.components.sensor import SensorStateClass
+import async_timeout
+import voluptuous as vol
 
-from .const import (
-    CONF_ACCOUNT_KEY, CONF_CHANNEL_ID, CONF_SCAN_INTERVAL,
-    SENSOR_TYPES, MODELS
+from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
+from homeassistant.const import CONF_SCAN_INTERVAL
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    UpdateFailed,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_platform(
-    hass: HomeAssistant, config, async_add_entities, discovery_info=None
-):
-    """Set up the UbiBot sensors via YAML."""
-    _LOGGER.debug("Setting up UbiBot platform with config: %s", config)
-    account_key = config[DOMAIN][CONF_ACCOUNT_KEY]
-    channel_id = config[DOMAIN][CONF_CHANNEL_ID]
-    scan_interval = config[DOMAIN][CONF_SCAN_INTERVAL]
+# Default polling interval: 15 minutes
+DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 
-    ubibot_data = UbibotData(account_key, channel_id, scan_interval)
-    # Initial fetch off the event loop
-    await hass.async_add_executor_job(ubibot_data.update)
+# Configuration schema for configuration.yaml
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+    {
+        vol.Required("platform"): "ubibot",
+        vol.Required("account_key"): cv.string,
+        vol.Required("channel"): cv.string,
+        vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): cv.time_period,
+    }
+)
 
+async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCallback, discovery_info=None):
+    """Set up the Ubibot sensor platform."""
+    account_key = config["account_key"]
+    channel = config["channel"]
+    scan_interval = config[CONF_SCAN_INTERVAL]
+
+    # Helper to fetch JSON from Ubibot
+    async def async_fetch_data():
+        url = (
+            f"https://webapi.ubibot.com/channels/{channel}/feeds.json"
+            f"?account_key={account_key}&results=1"
+        )
+        try:
+            async with async_timeout.timeout(10):
+                session = async_get_clientsession(hass)
+                resp = await session.get(url)
+                resp.raise_for_status()
+                return await resp.json()
+        except Exception as err:
+            raise UpdateFailed(f"Error fetching Ubibot data: {err}")
+
+    # Coordinator will handle polling and caching
+    coordinator = DataUpdateCoordinator(
+        hass,
+        _LOGGER,
+        name="ubibot",
+        update_method=async_fetch_data,
+        update_interval=scan_interval,
+    )
+
+    # Fetch initial data
+    await coordinator.async_config_entry_first_refresh()
+
+    # Map JSON fields to sensor metadata
+    field_map = {
+        "field1": {"label": "Temperature", "unit": "°C"},
+        "field2": {"label": "Humidity", "unit": "%"},
+        "field3": {"label": "Light", "unit": "lux"},
+        "field4": {"label": "Voltage", "unit": "V"},
+        "field5": {"label": "WiFi RSSI", "unit": "dBm"},
+        "field6": {"label": "Vibration Index", "unit": None},
+        "field7": {"label": "Knocks", "unit": None},
+        "field8": {"label": "External Temperature", "unit": "°C"},
+    }
+
+    # Create one entity per field
     entities = [
-        UbibotSensor(hass, sensor_type, channel_id, ubibot_data)
-        for sensor_type in SENSOR_TYPES
+        UbibotSensor(coordinator, channel, field, meta["label"], meta["unit"])
+        for field, meta in field_map.items()
     ]
+
     async_add_entities(entities)
 
-class UbibotSensor(Entity):
-    """Representation of a UbiBot field as a sensor."""
 
-    def __init__(
-        self, hass: HomeAssistant, sensor_type: str, channel_id: str, ubibot_data
-    ):
-        self.hass = hass
-        self._type = sensor_type
-        self._channel = channel_id
-        self._ubibot_data = ubibot_data
-        self._state = None
+class UbibotSensor(SensorEntity):
+    """Representation of a single Ubibot field as a Home Assistant sensor."""
 
-    @property
-    def name(self):
-        return f"Ubibot - {self._channel} - {self._type}"
+    def __init__(self, coordinator, channel, field, label, unit):
+        """Initialize the sensor."""
+        self.coordinator = coordinator
+        self._channel = channel
+        self._field = field
+        self._attr_name = f"Ubibot {label}"
+        self._attr_unique_id = f"ubibot_{channel}_{field}"
+        self._attr_unit_of_measurement = unit
 
     @property
-    def native_value(self):
-        return self._state
+    def state(self):
+        """Return the latest value for this field, or None if unavailable."""
+        data = self.coordinator.data
+        feeds = data.get("feeds") if data else None
+        if not feeds:
+            return None
+        # feeds is a list from oldest→newest; take the last element
+        latest = feeds[-1]
+        return latest.get(self._field)
 
     @property
-    def device_class(self):
-        return SENSOR_TYPES[self._type]["class"]
-
-    @property
-    def native_unit_of_measurement(self):
-        return SENSOR_TYPES[self._type]["unit"]
-
-    @property
-        def icon(self):
-        return SENSOR_TYPES[self._type]["icon"]
-
-    @property
-    def unique_id(self) -> str:
-        return f"{self._channel}_{self._type}"
-
-    async def async_update(self):
-        """Fetch new state data asynchronously."""
-        _LOGGER.debug("Updating sensor '%s'", self._type)
-        await self.hass.async_add_executor_job(self._ubibot_data.update)
-        feeds = self._ubibot_data.data.get("feeds", [])
-        new_state = next(
-            (
-                entry[SENSOR_TYPES[self._type]["field"]]
-                for entry in feeds
-                if SENSOR_TYPES[self._type]["field"] in entry
-            ),
-            None
-        )
-        _LOGGER.debug("New state for %s: %s", self._type, new_state)
-        self._state = new_state
-
-    @property
-    def state_class(self):
-        return SensorStateClass.MEASUREMENT
-
-    @property
-    def device_info(self):
-        data = self._ubibot_data.data.get("channel", {})
+    def extra_state_attributes(self):
+        """Add some metadata from the API response."""
+        data = self.coordinator.data or {}
         return {
-            "identifiers": {("ubibot", data.get("device_id"))},
-            "name": data.get("name"),
-            "manufacturer": "UbiBot",
-            "model": MODELS.get(data.get("device_id"), data.get("device_id")),
+            "server_time": data.get("server_time"),
+            "start": data.get("start"),
+            "end": data.get("end"),
         }
 
-class UbibotData:
-    """Ubibot data object."""
-
-    URL = "https://webapi.ubibot.com/channels/{0}/feeds.json?account_key={1}"
-
-    def __init__(
-        self, account_key: str, channel_id: str, scan_interval: int
-    ):
-        self.account_key = account_key
-        self.channel = channel_id
-        self.scan_interval = scan_interval
-        self.last_refresh = None
-        self.data = {}
-        self._lock = threading.Lock()
-
-    def update(self):
-        """Get data from UbiBot API."""
-        if (
-            self.last_refresh
-            and datetime.now() < self.last_refresh + timedelta(seconds=self.scan_interval)
-        ):
-            return
-        if not self._lock.acquire(False):
-            return
-        try:
-            url = self.URL.format(self.channel, self.account_key)
-            _LOGGER.debug("Fetching UbiBot URL: %s", url)
-            response = requests.get(url, timeout=10)
-            _LOGGER.debug("Received status code: %s", response.status_code)
-            if response.status_code == 200:
-                try:
-                    self.data = response.json()
-                    _LOGGER.debug("Fetched data keys: %s", list(self.data.keys()))
-                except ValueError as e:
-                    _LOGGER.error("Error parsing UbiBot JSON: %s", e)
-            else:
-                _LOGGER.error("Ubibot API error: %s", response.status_code)
-            self.last_refresh = datetime.now()
-        finally:
-            self._lock.release()
+    async def async_update(self):
+        """Request the coordinator to refresh data."""
+        await self.coordinator.async_request_refresh()
