@@ -37,75 +37,72 @@ class UbibotSensor(SensorEntity):
         self._type = sensor_type
         self._channel = channel
         self._ubibot_data = ubibot_data
-        self._state = self._ubibot_data.data["channel"]["last_values"][
-            SENSOR_TYPES[self._type]["field"]
-        ]["value"]
+
+        # Grab the most recent value from feeds
+        feeds = self._ubibot_data.data.get("feeds", [])
+        self._state = next(
+            (entry[SENSOR_TYPES[self._type]["field"]] for entry in feeds
+             if SENSOR_TYPES[self._type]["field"] in entry),
+            None
+        )
 
     @property
     def name(self):
-        """Return the name of the sensor."""
         return f"Ubibot - {self._channel} - {self._type}"
 
     @property
     def native_value(self):
-        """Return the native value of the sensor."""
         return self._state
 
     @property
     def device_class(self):
-        """Return the device class of the sensor."""
         return SENSOR_TYPES[self._type]["class"]
 
     @property
     def native_unit_of_measurement(self):
-        """Return the native unit of measurement."""
         return SENSOR_TYPES[self._type]["unit"]
 
     @property
     def icon(self):
-        """Return the icon."""
         return SENSOR_TYPES[self._type]["icon"]
 
     @property
     def unique_id(self) -> [str]:
-        """Return the icon."""
         return f"{self._channel}_{self._type}"
 
     def update(self):
         """Fetch new state data for the sensor."""
         self._ubibot_data.update()
-        self._state = self._ubibot_data.data["channel"]["last_values"][
-            SENSOR_TYPES[self._type]["field"]
-        ]["value"]
+        feeds = self._ubibot_data.data.get("feeds", [])
+        self._state = next(
+            (entry[SENSOR_TYPES[self._type]["field"]] for entry in feeds
+             if SENSOR_TYPES[self._type]["field"] in entry),
+            None
+        )
 
     @property
     def state_class(self):
-        """Return sensor state class"""
         return SensorStateClass.MEASUREMENT
 
     @property
     def device_info(self):
-        """Return device"""
+        data = self._ubibot_data.data.get("channel", {})
         return {
-            "identifiers": {
-                ("ubibot", self._ubibot_data.data["channel"]["full_serial"])
-            },
-            "name": self._ubibot_data.data["channel"]["full_serial"],
-            "firmware": self._ubibot_data.data["channel"]["firmware"],
-            "manufacturer": "Ubibot",
-            "model": MODELS[self._ubibot_data.data["channel"]["product_id"]],
+            "identifiers": {("ubibot", data.get("device_id"))},
+            "name": data.get("name"),
+            "manufacturer": "UbiBot",
+            "model": MODELS.get(data.get("device_id"), data.get("device_id")),
         }
 
 
 class UbibotData:
     """Ubibot data object."""
 
+    # Point to feeds.json endpoint
     URL = "https://webapi.ubibot.com/channels/{0}/feeds.json?account_key={1}"
 
     def __init__(self, account_key, channel, scan_interval):
         """
-        Initialize the UniFi Ubibot data object.
-
         :param account_key: Ubibot Account Key
         :param channel: Channel ID
         :param scan_interval: refresh interval in seconds
@@ -129,12 +126,9 @@ class UbibotData:
             url = UbibotData.URL.format(self.channel, self.account_key)
             r = requests.get(url)
             if r.status_code == 200:
-                self.data = json.loads(r.text)
-                self.data["channel"]["last_values"] = json.loads(
-                    self.data["channel"]["last_values"]
-                )
+                self.data = r.json()
             else:
-                _LOGGER.error(r.status_code)
+                _LOGGER.error("Ubibot API error: %s", r.status_code)
             self.last_refresh = datetime.now()
         finally:
             self._update_in_progress.release()
