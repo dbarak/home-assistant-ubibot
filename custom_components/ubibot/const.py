@@ -6,6 +6,11 @@ from homeassistant.const import (
     TEMP_CELSIUS,
 )
 
+
+CONF_ACCOUNT_KEY = "account_key"
+CONF_CHANNEL_ID = "channel_id"
+CONF_SCAN_INTERVAL = "scan_interval"
+
 SENSOR_TYPES = {
     "temperature": {
         "class": DEVICE_CLASS_TEMPERATURE,
