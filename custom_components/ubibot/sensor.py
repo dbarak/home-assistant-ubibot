@@ -1,10 +1,10 @@
 # custom_components/ubibot/sensor.py
 """
-Ubibot WS1 dynamic sensor platform.
+Ubibot WS1 dynamic sensor platform (latest‐only).
 
-  • Fetches the last 50 feed entries via the Ubibot Web API  
+  • Fetches the single most recent feed entry via the Ubibot Web API  
   • Reads channel["fieldX"] to determine which sensors to create  
-  • For each field, finds the most recent feed entry containing that key  
+  • For each field, grabs the value from that one latest entry  
   • Groups sensors under one "Ubibot WS1 Channel <channel>" device
 """
 
@@ -58,10 +58,10 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
     scan_interval = config[CONF_SCAN_INTERVAL]
 
     async def async_fetch_data():
-        """Fetch the last 50 feed entries from Ubibot."""
+        """Fetch only the single most recent feed entry from Ubibot."""
         url = (
             f"https://webapi.ubibot.com/channels/{channel}/feeds.json"
-            f"?account_key={account_key}&results=50"
+            f"?account_key={account_key}&results=1"
         )
         try:
             async with async_timeout.timeout(10):
@@ -80,29 +80,30 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
         update_interval=scan_interval,
     )
 
-    # Prime the coordinator to get channel + feeds
+    # Initial fetch to get channel metadata
     await coordinator.async_config_entry_first_refresh()
 
     data = coordinator.data or {}
     channel_info = data.get("channel", {})
 
-    # Build a map of fieldKey -> label for every non-empty field in channel_info
-    field_map = {}
-    for key, label in channel_info.items():
-        if key.startswith("field") and label:
-            field_map[key] = label
+    # Determine which fields are defined (non-empty) in the channel metadata
+    field_map = {
+        key: label
+        for key, label in channel_info.items()
+        if key.startswith("field") and label
+    }
 
-    # Create one sensor per defined field
-    entities = []
-    for field_key, label in field_map.items():
-        unit = _UNITS.get(field_key)
-        entities.append(UbibotWS1Sensor(coordinator, channel, field_key, label, unit))
+    # Create a sensor for each defined field
+    entities = [
+        UbibotWS1Sensor(coordinator, channel, field_key, label, _UNITS.get(field_key))
+        for field_key, label in field_map.items()
+    ]
 
     async_add_entities(entities)
 
 
 class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
-    """A SensorEntity for a single Ubibot WS1 field."""
+    """A SensorEntity for a single Ubibot WS1 field (latest‐only)."""
 
     def __init__(self, coordinator, channel, field, label, unit):
         """Initialize the sensor."""
@@ -120,21 +121,21 @@ class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
 
     @property
     def state(self):
-        """Return the latest value for this field from the feeds."""
+        """Return the value for this field from the single latest feed."""
         data = self.coordinator.data or {}
         feeds = data.get("feeds", [])
-        # Walk backwards until we find our field in a feed entry
-        for entry in reversed(feeds):
-            if self._field in entry:
-                return entry[self._field]
-        return None
+        if not feeds:
+            return None
+        latest = feeds[0]  # only one entry
+        return latest.get(self._field)
 
     @property
     def extra_state_attributes(self):
-        """Expose some API metadata as attributes."""
+        """Expose API metadata as attributes."""
         data = self.coordinator.data or {}
         return {
             "server_time": data.get("server_time"),
             "start": data.get("start"),
             "end": data.get("end"),
+            "last_entry_date": data.get("channel", {}).get("last_entry_date"),
         }
