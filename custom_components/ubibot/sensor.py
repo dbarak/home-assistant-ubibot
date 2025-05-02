@@ -100,7 +100,7 @@ class UbibotSensor(SensorEntity):
 class UbibotData:
     """Ubibot data object."""
 
-    URL = "https://api.ubibot.io/channels/{0}?account_key={1}"
+    URL = "https://webapi.ubibot.com/channels/{0}/feeds.json?account_key={1}"
 
     def __init__(self, account_key, channel, scan_interval):
         """
