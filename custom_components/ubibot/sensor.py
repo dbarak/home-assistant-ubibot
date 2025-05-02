@@ -1,11 +1,12 @@
 # custom_components/ubibot/sensor.py
 """
-Ubibot WS1 dynamic sensor platform (most‐recent per field).
+Ubibot WS1 dynamic sensor platform (most‐recent per field, with °F conversion).
 
   • Fetches the last 50 feed entries via the Ubibot Web API  
   • Reads channel["fieldX"] to determine which sensors to create  
   • For each field, sorts all feeds by created_at and returns the first
     (most recent) entry that contains that field  
+  • Converts field1 & field8 from °C to °F  
   • Groups sensors under one "Ubibot WS1 Channel <channel>" device
 """
 
@@ -38,16 +39,16 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     }
 )
 
-# Known units for your 8 fields
+# Units: field1 & field8 now °F; others unchanged
 _UNITS = {
-    "field1": "°C",   # Temperature
+    "field1": "°F",   # Temperature → converted
     "field2": "%",    # Humidity
     "field3": "lux",  # Light
     "field4": "V",    # Voltage
-    "field5": "dBm",  # WIFI RSSI
+    "field5": "dBm",  # WiFi RSSI
     "field6": None,   # Vibration Index
     "field7": None,   # Knocks
-    "field8": "°C",   # External Temperature Probe
+    "field8": "°F",   # External Temperature Probe → converted
 }
 
 
@@ -80,13 +81,13 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
         update_interval=scan_interval,
     )
 
-    # Initial fetch
+    # Initial data fetch
     await coordinator.async_config_entry_first_refresh()
 
     data = coordinator.data or {}
     channel_info = data.get("channel", {})
 
-    # Only create sensors for actual fields defined in channel_info
+    # Only create sensors for fields that have a non-empty label
     field_map = {
         key: label
         for key, label in channel_info.items()
@@ -109,7 +110,7 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
 
 
 class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
-    """Sensor for a single Ubibot WS1 field (using most‐recent per field)."""
+    """Sensor for a single Ubibot WS1 field (with optional conversion)."""
 
     def __init__(self, coordinator, channel, field, label, unit):
         """Initialize sensor and device grouping."""
@@ -127,7 +128,7 @@ class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
 
     @property
     def state(self):
-        """Return the most recent non-null value for this field."""
+        """Return the most recent value for this field, converting if needed."""
         data = self.coordinator.data or {}
         feeds = data.get("feeds", [])
         if not feeds:
@@ -142,7 +143,11 @@ class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
         # Walk from newest → oldest looking for our field
         for entry in reversed(sorted_feeds):
             if self._field in entry:
-                return entry[self._field]
+                value = entry[self._field]
+                # Convert Celsius → Fahrenheit for field1 & field8
+                if self._field in ("field1", "field8") and isinstance(value, (int, float)):
+                    value = value * 9.0 / 5.0 + 32.0
+                return value
 
         return None
 
