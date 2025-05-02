@@ -8,7 +8,6 @@ import requests
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import Entity
 from homeassistant.components.sensor import SensorStateClass
-from homeassistant.helpers.discovery import async_load_platform
 
 from .const import (
     CONF_ACCOUNT_KEY, CONF_CHANNEL_ID, CONF_SCAN_INTERVAL,
@@ -22,9 +21,9 @@ async def async_setup_platform(
 ):
     """Set up the UbiBot sensors via YAML."""
     _LOGGER.debug("Setting up UbiBot platform with config: %s", config)
-    account_key = config.get(CONF_ACCOUNT_KEY)
-    channel_id = config.get(CONF_CHANNEL_ID)
-    scan_interval = config.get(CONF_SCAN_INTERVAL)
+    account_key = config[DOMAIN][CONF_ACCOUNT_KEY]
+    channel_id = config[DOMAIN][CONF_CHANNEL_ID]
+    scan_interval = config[DOMAIN][CONF_SCAN_INTERVAL]
 
     ubibot_data = UbibotData(account_key, channel_id, scan_interval)
     # Initial fetch off the event loop
@@ -65,7 +64,7 @@ class UbibotSensor(Entity):
         return SENSOR_TYPES[self._type]["unit"]
 
     @property
-    def icon(self):
+        def icon(self):
         return SENSOR_TYPES[self._type]["icon"]
 
     @property
