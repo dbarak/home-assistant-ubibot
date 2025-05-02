@@ -6,10 +6,14 @@ from datetime import datetime, timedelta
 import requests
 
 from homeassistant.core import HomeAssistant
-from homeassistant.const import CONF_API_KEY, CONF_CHANNEL, CONF_SCAN_INTERVAL
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.helpers.entity import Entity
+from homeassistant.components.sensor import SensorStateClass
+from homeassistant.helpers.discovery import async_load_platform
 
-from .const import SENSOR_TYPES, MODELS
+from .const import (
+    CONF_ACCOUNT_KEY, CONF_CHANNEL_ID, CONF_SCAN_INTERVAL,
+    SENSOR_TYPES, MODELS
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,30 +22,29 @@ async def async_setup_platform(
 ):
     """Set up the UbiBot sensors via YAML."""
     _LOGGER.debug("Setting up UbiBot platform with config: %s", config)
-    account_key = config.get(CONF_API_KEY)
-    channel = config.get(CONF_CHANNEL)
+    account_key = config.get(CONF_ACCOUNT_KEY)
+    channel_id = config.get(CONF_CHANNEL_ID)
     scan_interval = config.get(CONF_SCAN_INTERVAL)
 
-    ubibot_data = UbibotData(account_key, channel, scan_interval)
-
+    ubibot_data = UbibotData(account_key, channel_id, scan_interval)
     # Initial fetch off the event loop
     await hass.async_add_executor_job(ubibot_data.update)
 
     entities = [
-        UbibotSensor(hass, sensor_type, channel, ubibot_data)
+        UbibotSensor(hass, sensor_type, channel_id, ubibot_data)
         for sensor_type in SENSOR_TYPES
     ]
     async_add_entities(entities)
 
-class UbibotSensor(SensorEntity):
+class UbibotSensor(Entity):
     """Representation of a UbiBot field as a sensor."""
 
     def __init__(
-        self, hass: HomeAssistant, sensor_type: str, channel: str, ubibot_data
+        self, hass: HomeAssistant, sensor_type: str, channel_id: str, ubibot_data
     ):
         self.hass = hass
         self._type = sensor_type
-        self._channel = channel
+        self._channel = channel_id
         self._ubibot_data = ubibot_data
         self._state = None
 
@@ -105,10 +108,10 @@ class UbibotData:
     URL = "https://webapi.ubibot.com/channels/{0}/feeds.json?account_key={1}"
 
     def __init__(
-        self, account_key: str, channel: str, scan_interval: int
+        self, account_key: str, channel_id: str, scan_interval: int
     ):
         self.account_key = account_key
-        self.channel = channel
+        self.channel = channel_id
         self.scan_interval = scan_interval
         self.last_refresh = None
         self.data = {}
