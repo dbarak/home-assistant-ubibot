@@ -1,10 +1,10 @@
 # custom_components/ubibot/sensor.py
 """
-Ubibot custom sensor platform.
+Ubibot WS1 custom sensor platform.
 
   • Fetches the latest feed via the Ubibot Web API  
   • Creates one SensorEntity per field (temperature, humidity, etc.)  
-  • Groups them under a single "Ubibot Channel <channel>" device
+  • Groups them under a single "Ubibot WS1 Channel <channel>" device
 """
 
 import logging
@@ -26,8 +26,10 @@ from homeassistant.helpers.update_coordinator import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Default polling interval: 15 minutes
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
 
+# The YAML block remains `platform: ubibot`
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required("platform"): "ubibot",
@@ -39,7 +41,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
 
 
 async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCallback, discovery_info=None):
-    """Set up the Ubibot sensor platform from YAML configuration."""
+    """Set up the Ubibot WS1 sensor platform from YAML configuration."""
     account_key = config["account_key"]
     channel = config["channel"]
     scan_interval = config[CONF_SCAN_INTERVAL]
@@ -53,17 +55,17 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
         try:
             async with async_timeout.timeout(10):
                 session = async_get_clientsession(hass)
-                r = await session.get(url)
-                r.raise_for_status()
-                return await r.json()
+                resp = await session.get(url)
+                resp.raise_for_status()
+                return await resp.json()
         except Exception as err:
-            raise UpdateFailed(f"Error fetching Ubibot data: {err}")
+            raise UpdateFailed(f"Error fetching Ubibot WS1 data: {err}")
 
     # Coordinator handles polling & caching
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name=f"ubibot_{channel}",
+        name=f"ubibot_ws1_{channel}",
         update_method=async_fetch_data,
         update_interval=scan_interval,
     )
@@ -85,34 +87,35 @@ async def async_setup_platform(hass, config, async_add_entities: AddEntitiesCall
 
     # Create one sensor per field
     entities = [
-        UbibotSensor(coordinator, channel, field, meta["label"], meta["unit"])
+        UbibotWS1Sensor(coordinator, channel, field, meta["label"], meta["unit"])
         for field, meta in field_map.items()
     ]
 
     async_add_entities(entities)
 
 
-class UbibotSensor(CoordinatorEntity, SensorEntity):
-    """A SensorEntity for a single Ubibot field."""
+class UbibotWS1Sensor(CoordinatorEntity, SensorEntity):
+    """A SensorEntity for a single Ubibot WS1 field."""
 
     def __init__(self, coordinator, channel, field, label, unit):
         """Initialize the sensor and its device info."""
         super().__init__(coordinator)
         self._field = field
-        self._attr_name = f"Ubibot {label}"
-        self._attr_unique_id = f"ubibot_{channel}_{field}"
+        # Prefix all sensor names with "Ubibot WS1"
+        self._attr_name = f"Ubibot WS1 {label}"
+        self._attr_unique_id = f"ubibot_ws1_{channel}_{field}"
         self._attr_unit_of_measurement = unit
-        # This groups all your Ubibot sensors under one device in the UI:
+        # Group under a single device named "Ubibot WS1 Channel <channel>"
         self._attr_device_info = {
-            "identifiers": {("ubibot", channel)},
-            "name": f"Ubibot Channel {channel}",
+            "identifiers": {("ubibot_ws1", channel)},
+            "name": f"Ubibot WS1 Channel {channel}",
             "manufacturer": "Ubibot",
             "model": "Web API",
         }
 
     @property
     def state(self):
-        """Return the latest value for this field, or None."""
+        """Return the latest value for this field, or None if unavailable."""
         data = self.coordinator.data or {}
         feeds = data.get("feeds", [])
         if not feeds:
